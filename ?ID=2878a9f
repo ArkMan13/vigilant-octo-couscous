@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en" style="height: 100.00%; ">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>XYZGiveaways</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/css/bootstrap.min.css"
+        integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+</head>
+
+<body style="height: 100.00%; ">
+
+    <div style="display: grid; grid-template-columns: 256px 1fr; height: 100.00%; background-color: #222; color: #fff; text-align: center; ">
+        <div style="font-size: 16px; padding: 8px; overflow-y: auto; ">
+            <div style="height: 8px; "></div>
+            Gift
+            <div id="Game" style="font-weight: bold; "></div>
+            to
+            <div id="Username" style="font-weight: bold; "></div>
+            <br>
+            Unlock progress:
+            <div id="Progress" style="font-size: 56px; "></div>
+            Controls: Mouse and WASD<br>
+            <br>
+            <div style="font-size: 1.25em; ">What is this?</div>
+            <br>
+            People always tell me that they wish they could gift games too, so I once made a giveaway where you couldn't get games for yourself, only help others. I was overwhelmed by how much people were actually willing to help others.<br>
+            <br>
+            This is my attempt to do something like that again. Anyone who feels that this person should have their game can help unlock it for them. Even though I'm paying, I will be helping too, and so will my girlfriend, because we actually like the space game thing and we feel that it gives us a <i>sense of pride and accomplishment</i>™ to help someone get a game they really want. :P However, unlike in my other giveaway, here the person requesting the game is very welcome to help themselves too.<br>
+            <br>
+            <div style="font-size: 1.25em; ">What's up with the space game thing?</div>
+            <br>
+            I was originally just going to have a button that each of us could press as many times as we want. When it had been pressed enough times, the game would be unlocked. The problem is that someone would probably make a bot. So I added a CAPTCHA, but solving multiple CAPTCHAs in a row was REALLY annoying.<br>
+            <br>
+            So instead I made this quick game. Each time you finish it, the replay is sent to the server, so, if necessary, I can check the replays to confirm that it's actually a human playing. This is only version 1 of the game, though. If this keeps going, I will be adding more features to the game, making it even harder for bots to beat in a human-like way.<br>
+        </div>
+        <div style="background-color: #111; overflow: hidden; " id="CanvasContainerElement">
+            <canvas id="CanvasElement"
+                style="display: block; position: relative; left: 50%; top: 50%; transform: translate(-50%, -50%); "></canvas>
+        </div>
+    </div>
+
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.4/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@3.3.7/dist/js/bootstrap.min.js"
+        integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa"
+        crossorigin="anonymous"></script>
+
+    <script src="MersenneTwister.js"></script>
+    <script src="Game.js"></script>
+
+
+    <script>
+
+        let CurrentChallenge;
+        let MyGame;
+        let DirectionChange;
+        let MyContext;
+        let Size;
+        let Status = "Ready";
+
+        function GetParam(Z0) {
+            return (new URLSearchParams(window.location.search)).get(Z0);
+        }
+
+        async function StartGame(ChallengeID) {
+
+            Status = "Playing";
+
+            let Keys = {};
+
+            DirectionChange = 0;
+
+            let M = new MersenneTwister(ChallengeID);
+
+            MyGame = new Game({ M });
+
+            await MyGame.Prepare();
+
+
+
+            let Frames = 0;
+
+
+            let StartTime = window.performance.now();
+
+            async function EachFrame() {
+
+
+                let DownUp = 0;
+                if (Keys["ArrowDown"] || Keys["KeyS"]) DownUp--;
+                if (Keys["ArrowUp"] || Keys["KeyW"]) DownUp++;
+                let LeftRight = 0;
+                if (Keys["ArrowLeft"] || Keys["KeyA"]) LeftRight--;
+                if (Keys["ArrowRight"] || Keys["KeyD"]) LeftRight++;
+
+                let Result;
+
+                while (Frames < (window.performance.now() - StartTime) / (1000 / MyGame.FrameRate)) {
+                    Result = MyGame.CalculateFrame({ DownUp, LeftRight, DirectionChange });
+                    DirectionChange = 0;
+                    Frames++;
+                    if (Result) break;
+                }
+
+                if (Result) {
+
+                    Status = "Ready";
+
+                    let MyResultUnparsed = await (await fetch(`/?Action=SubmitReplay&ID=${GetParam("ID")}`, {
+                        method: "POST", headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ CurrentChallenge, Result })
+                    })).text();
+                    let MyResult = JSON.parse(MyResultUnparsed);
+
+                    document.getElementById("Progress").innerHTML = MyResult.Progress;
+
+                    if (MyResult.Alert) alert(MyResult.Alert);
+
+                    if (MyResult.Progress === "100.00%") {
+                        MyGame = undefined;
+                        Status = "Finished";
+                        Text();
+                    }
+
+
+
+                    return;
+                }
+
+                setTimeout(EachFrame);
+
+            }
+
+            window.addEventListener("keydown", function (MyEvent) {
+                Keys[MyEvent.code] = true;
+            });
+
+            window.addEventListener("keyup", function (MyEvent) {
+                delete Keys[MyEvent.code];
+            });
+
+            function EachFrameDraw() {
+                if (!MyGame) return;
+                MyGame.Draw({ MyContext, Size });
+                requestAnimationFrame(EachFrameDraw);
+            }
+
+            EachFrame();
+            requestAnimationFrame(EachFrameDraw);
+
+        }
+
+        async function Load() {
+
+            let MyCanvas = document.getElementById("CanvasElement");
+
+            function SetSize() {
+
+                let CanvasContainerElementRect = document.getElementById("CanvasContainerElement").getBoundingClientRect();
+
+                Size = Math.floor(Math.min(CanvasContainerElementRect.width, CanvasContainerElementRect.height));
+
+                MyCanvas.width = Size;
+                MyCanvas.height = Size;
+                MyCanvas.style.width = Size + "px";
+                MyCanvas.style.height = Size + "px";
+
+                if (Status === "Ready") {
+                    Text();
+                } else if (Status === "Loading") {
+                    Text();
+                }
+
+            }
+
+
+            MyContext = MyCanvas.getContext("2d");
+
+            SetSize();
+
+
+
+
+            let MyResultUnparsed = await (await fetch(`/?Action=GetStatus&ID=${GetParam("ID")}`, {
+                method: "GET", headers: { 'Content-Type': 'application/json' }
+            })).text();
+            let MyResult = JSON.parse(MyResultUnparsed);
+            document.getElementById("Game").innerHTML = MyResult.Game;
+            document.getElementById("Username").innerHTML = `<a href="https://reddit.com/user/${MyResult.Username}/" target="_blank">/u/${MyResult.Username}</a>`;
+            document.getElementById("Progress").innerHTML = MyResult.Progress;
+
+            if (MyResult.Progress === "100.00%") {
+                Status = "Finished";
+                Text();
+                return;
+            }
+
+
+
+
+            function MouseMove(MyEvent) {
+                DirectionChange += MyEvent.movementX;
+            }
+
+            function lockChangeAlert() {
+                if (document.pointerLockElement === MyCanvas) {
+                    document.addEventListener("mousemove", MouseMove, false);
+                } else {
+                    document.removeEventListener("mousemove", MouseMove, false);
+                }
+            }
+
+            window.addEventListener("resize", SetSize);
+
+
+            MyCanvas.onclick = function () {
+                if (Status === "Ready") {
+                    Status = "Loading";
+                    Text();
+                    MyGame = undefined;
+                    Load2();
+                }
+                MyCanvas.requestPointerLock();
+            }
+            document.addEventListener('pointerlockchange', lockChangeAlert, false);
+
+
+
+
+
+
+        }
+
+        function Text() {
+            MyContext.fillStyle = "#000";
+            MyContext.fillRect(0, 0, Size, Size);
+
+            let FontSize = Math.round(Size * SmartValue("00000"));
+
+            MyContext.fillStyle = "#fff";
+            MyContext.font = FontSize + "px Calibri";
+            MyContext.textAlign = "center";
+            MyContext.textBaseline = "center";
+            let Text;
+            if (Status === "Ready") {
+                Text = "Click to start";
+            } else if (Status === "Loading") {
+                Text = "Loading...";
+            } else if (Status === "Finished") {
+                Text = "This has ended.";
+            }
+            MyContext.fillText(Text, Size / 2, Size / 2);
+        }
+
+        async function Load2() {
+
+            let MyResultUnparsed = await (await fetch(`/?Action=GetChallenge&ID=${GetParam("ID")}`, {
+                method: "GET", headers: { 'Content-Type': 'application/json' }
+            })).text();
+            let MyResult = JSON.parse(MyResultUnparsed);
+
+            CurrentChallenge = MyResult;
+
+            StartGame(CurrentChallenge.ChallengeID);
+
+        }
+
+        Load();
+
+
+
+    </script>
+
+
+
+</body>
+
+</html>
